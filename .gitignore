@@ -1,0 +1,9 @@
+.env
+.env.*
+.airpage/
+*.bmp
+*.jpg
+*.jpeg
+__pycache__/
+.venv/
+.python-version

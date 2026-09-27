@@ -1,0 +1,56 @@
+name: AirPage 定时推送
+
+on:
+  schedule:
+    # 每 5 分钟一次。GitHub 定时任务可能比设定时间晚几分钟。
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: airpage-push
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 确认仓库没有写入设备链接
+        run: |
+          if grep -RInE --exclude-dir=.git 'id=[A-Za-z0-9_-]{16}' .; then
+            echo "仓库中出现了疑似设备 ID，请删除后再运行。"
+            exit 1
+          fi
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装字体和依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          pip install -r requirements.txt
+
+      - name: 渲染并推送
+        env:
+          AIRPAGE_DEVICE_ID: ${{ secrets.AIRPAGE_DEVICE_ID }}
+          AIRPAGE_ORIGIN: ${{ vars.AIRPAGE_ORIGIN }}
+          AIRPAGE_WIDTH: ${{ vars.AIRPAGE_WIDTH }}
+          AIRPAGE_HEIGHT: ${{ vars.AIRPAGE_HEIGHT }}
+          AIRPAGE_MODE: ${{ vars.AIRPAGE_MODE }}
+          AIRPAGE_TEMPLATE: ${{ vars.AIRPAGE_TEMPLATE }}
+          AIRPAGE_MAZE_SEED: ${{ vars.AIRPAGE_MAZE_SEED }}
+          AIRPAGE_MAZE_TITLE: ${{ vars.AIRPAGE_MAZE_TITLE }}
+          AIRPAGE_MAZE_SOLVE: ${{ vars.AIRPAGE_MAZE_SOLVE }}
+          AIRPAGE_MAZE_LARGE: ${{ vars.AIRPAGE_MAZE_LARGE }}
+          TZ: Asia/Shanghai
+        run: python scripts/push_airpage.py
