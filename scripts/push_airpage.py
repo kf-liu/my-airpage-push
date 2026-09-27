@@ -12,6 +12,7 @@ import math
 import os
 import struct
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -430,8 +431,7 @@ def encode_bmp(image: Image.Image, mode: str) -> bytes:
         shifts = (4, 0)
         palette_luma = tuple(index * 17 for index in range(16))
 
-    raw_stride = (width + pixels_per_byte - 1) // pixels_per_byte
-    stride = (raw_stride + 3) & ~3
+    stride = ((width * bit_count + 31) // 32) * 4
     header_size = 14 + 40 + levels * 4
     pixel_size = stride * height
     file_size = header_size + pixel_size
@@ -448,8 +448,8 @@ def encode_bmp(image: Image.Image, mode: str) -> bytes:
         bit_count,
         0,
         pixel_size,
-        0,
-        0,
+        2835,
+        2835,
         levels,
         levels,
     ) + palette
@@ -470,49 +470,99 @@ def redact(text: str, device_id: str) -> str:
     return text.replace(device_id, "***")[:500]
 
 
-def push_bmp(origin: str, device_id: str, bmp: bytes) -> None:
+def multipart_body(bmp: bytes) -> tuple[bytes, str]:
+    boundary = "----airpagepush"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image"; filename="fallback.bmp"\r\n'
+        "Content-Type: image/bmp\r\n\r\n"
+    ).encode() + bmp + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def upload_bmp(origin: str, device_id: str, bmp: bytes) -> bool:
+    body, content_type = multipart_body(bmp)
     endpoints = (
         f"{origin}/api/device/{device_id}/push",
         f"{origin}/api/device/{device_id}/image",
     )
-    manual_refresh = False
     for index, endpoint in enumerate(endpoints):
         request = urllib.request.Request(
             endpoint,
-            data=bmp,
+            data=body,
             method="POST",
-            headers={"Content-Type": "image/bmp", "User-Agent": "my-airpage-push"},
+            headers={"Content-Type": content_type, "User-Agent": "my-airpage-push"},
         )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 status = response.status
-                body = response.read().decode("utf-8", errors="replace")
+                payload_text = response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as error:
             status = error.code
-            body = error.read().decode("utf-8", errors="replace")
+            payload_text = error.read().decode("utf-8", errors="replace")
             if status == 404 and index == 0:
-                manual_refresh = True
-                print("推送接口返回 404，改为上传图片接口。这次需要在设备上手动刷新。")
+                print("推送接口返回 404，改为上传图片接口。")
                 continue
-            fail(f"推送失败，HTTP {status}。{redact(body, device_id)}")
+            fail(f"推送失败，HTTP {status}。{redact(payload_text, device_id)}")
         except urllib.error.URLError:
             fail("无法连接 AirPage 服务。")
 
         if not 200 <= status < 300:
-            fail(f"推送失败，HTTP {status}。{redact(body, device_id)}")
-
+            fail(f"推送失败，HTTP {status}。{redact(payload_text, device_id)}")
         try:
-            payload = json.loads(body)
+            payload = json.loads(payload_text) if payload_text.strip() else {}
         except json.JSONDecodeError:
-            fail("推送返回了无法解析的响应。")
+            payload = {}
         refreshed = bool(payload.get("refreshed"))
-        print(f"图片已上传，大小 {payload.get('bytes', len(bmp))} 字节。")
-        if manual_refresh or not refreshed:
-            print("自动刷新没有完成。请按设备向下键刷新，不要立刻重复上传。")
-        else:
-            print("已请求自动刷新。是否真正显示到屏幕上，需要看设备本身。")
-        return
+        print(f"图片已上传，大小 {payload.get('bytes', len(bmp))} 字节，服务端自动刷新 {'是' if refreshed else '否'}。")
+        return refreshed
     fail("推送失败。")
+
+
+def publish_refresh(device_id: str) -> None:
+    import paho.mqtt.client as mqtt
+
+    connected = {"ok": False}
+
+    def on_connect(_client, _userdata, _flags, reason_code, _properties=None) -> None:
+        code = getattr(reason_code, "value", reason_code)
+        connected["ok"] = code == 0
+
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id=f"airpage-push-{os.urandom(4).hex()}",
+        transport="websockets",
+    )
+    client.tls_set()
+    client.ws_set_options(path="/mqtt")
+    client.on_connect = on_connect
+    try:
+        client.connect("mqtt-cn.uipcat.com", 8084, keepalive=57)
+    except OSError:
+        fail("图片已上传，但刷新通道连接失败。请按设备向下键，不要立刻重复上传。")
+    client.loop_start()
+    deadline = time.time() + 8
+    while time.time() < deadline and not connected["ok"]:
+        time.sleep(0.1)
+    if not connected["ok"]:
+        client.loop_stop()
+        fail("图片已上传，但刷新通道没有连上。请按设备向下键，不要立刻重复上传。")
+    info = client.publish(
+        f"airpage/device/{device_id}/refresh",
+        json.dumps({"ts": int(time.time() * 1000)}),
+        qos=0,
+    )
+    info.wait_for_publish(timeout=8)
+    client.disconnect()
+    client.loop_stop()
+    if not info.is_published():
+        fail("图片已上传，但刷新指令没有发出。请按设备向下键，不要立刻重复上传。")
+    print("已发送刷新指令。屏幕是否更新，要看设备是否在线。")
+
+
+def push_bmp(origin: str, device_id: str, bmp: bytes) -> None:
+    upload_bmp(origin, device_id, bmp)
+    publish_refresh(device_id)
 
 
 def main() -> None:
