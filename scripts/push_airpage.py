@@ -520,52 +520,66 @@ def upload_bmp(origin: str, device_id: str, bmp: bytes) -> bool:
 
 
 def publish_refresh(device_id: str) -> None:
+    """按 crossmux 固件通知设备：向 airpage/device/<id>/refresh 发一条消息。
+
+    设备在 AirPage 实时模式里订阅这个主题，收到后自己下载 /api/device/<id>/latest。
+    固件走 mqtt-cn.uipcat.com:1883；网站走同一主机的 8084 WebSocket。
+    """
     import paho.mqtt.client as mqtt
 
-    connected = {"ok": False}
-
-    def on_connect(_client, _userdata, _flags, reason_code, _properties=None) -> None:
-        code = getattr(reason_code, "value", reason_code)
-        connected["ok"] = code == 0
-
-    client = mqtt.Client(
-        mqtt.CallbackAPIVersion.VERSION2,
-        client_id=f"airpage-push-{os.urandom(4).hex()}",
-        transport="websockets",
+    topic = f"airpage/device/{device_id}/refresh"
+    payload = json.dumps({"ts": int(time.time() * 1000)})
+    attempts = (
+        ("tcp", 1883, False),
+        ("websockets", 8084, True),
     )
-    client.tls_set()
-    client.ws_set_options(path="/mqtt")
-    client.on_connect = on_connect
-    try:
-        client.connect("mqtt-cn.uipcat.com", 8084, keepalive=57)
-    except OSError:
-        fail("图片已上传，但刷新通道连接失败。请按设备向下键，不要立刻重复上传。")
-    client.loop_start()
-    deadline = time.time() + 8
-    while time.time() < deadline and not connected["ok"]:
-        time.sleep(0.1)
-    if not connected["ok"]:
+    for transport, port, use_tls in attempts:
+        connected = {"ok": False}
+
+        def on_connect(_client, _userdata, _flags, reason_code, _properties=None, box=connected) -> None:
+            code = getattr(reason_code, "value", reason_code)
+            box["ok"] = code == 0
+
+        client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            client_id=f"airpage-push-{os.urandom(4).hex()}",
+            transport=transport,
+        )
+        if use_tls:
+            client.tls_set()
+            client.ws_set_options(path="/mqtt")
+        client.on_connect = on_connect
+        try:
+            client.connect("mqtt-cn.uipcat.com", port, keepalive=57)
+        except OSError:
+            continue
+        client.loop_start()
+        deadline = time.time() + 8
+        while time.time() < deadline and not connected["ok"]:
+            time.sleep(0.1)
+        published = False
+        if connected["ok"]:
+            info = client.publish(topic, payload, qos=0)
+            info.wait_for_publish(timeout=8)
+            published = info.is_published()
+        client.disconnect()
         client.loop_stop()
-        fail("图片已上传，但刷新通道没有连上。请按设备向下键，不要立刻重复上传。")
-    info = client.publish(
-        f"airpage/device/{device_id}/refresh",
-        json.dumps({"ts": int(time.time() * 1000)}),
-        qos=0,
-    )
-    info.wait_for_publish(timeout=8)
-    client.disconnect()
-    client.loop_stop()
-    if not info.is_published():
-        fail("图片已上传，但刷新指令没有发出。请按设备向下键，不要立刻重复上传。")
-    print("已发送刷新指令。屏幕是否更新，要看设备是否在线。")
+        if published:
+            print(f"已通过端口 {port} 发送刷新指令。")
+            return
+    fail("图片已上传，但刷新指令没有送到设备。请让设备停留在 AirPage 实时模式，或按向下键手动刷新。")
 
 
 def push_bmp(origin: str, device_id: str, bmp: bytes) -> None:
-    upload_bmp(origin, device_id, bmp)
+    refreshed = upload_bmp(origin, device_id, bmp)
+    if refreshed:
+        print("服务端已通知设备刷新。请让设备停留在 AirPage 实时模式。")
+        return
     publish_refresh(device_id)
 
 
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)
     config = load_config()
     device_id = require_device_id()
     origin = require_origin(str(config.get("origin", "")))
