@@ -1,0 +1,13 @@
+{
+  "template": "maze",
+  "origin": "https://airpage.crossmux.cn",
+  "width": 480,
+  "height": 800,
+  "mode": "gray4",
+  "maze": {
+    "seed": "daily",
+    "title": "MAZE · 迷宫",
+    "solve": false,
+    "large": false
+  }
+}
