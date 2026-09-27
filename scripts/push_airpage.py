@@ -440,7 +440,7 @@ def encode_bmp(image: Image.Image, mode: str) -> bytes:
 
     palette = b"".join(struct.pack("<BBBB", luma, luma, luma, 0) for luma in palette_luma)
     header = struct.pack("<2sIHHI", b"BM", file_size, 0, 0, header_size) + struct.pack(
-        "<IiiHHIIIiiII",
+        "<IiiHHIIiiII",
         40,
         width,
         height,
