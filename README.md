@@ -2,7 +2,7 @@
 
 用 GitHub Actions 定时把 AirPage 模板推到墨水屏。任务只在 GitHub 上运行。
 
-当前接入的是网站上的迷宫模板。默认每天北京时间 08:00 推一张新迷宫。
+当前接入的是网站上的迷宫模板。默认每 5 分钟推一张新迷宫，种子是当次运行的 Unix 时间戳。
 
 ## 配置
 
@@ -11,7 +11,7 @@
 | 配置 | 环境变量 | 当前值 | 说明 |
 | --- | --- | --- | --- |
 | `template` | `AIRPAGE_TEMPLATE` | `maze` | 目前只能填 `maze` |
-| `maze.seed` | `AIRPAGE_MAZE_SEED` | `daily` | `daily` 用当天北京日期做种子；填其他文字则每天同一张迷宫 |
+| `maze.seed` | `AIRPAGE_MAZE_SEED` | `timestamp` | `timestamp` 用当次运行的 Unix 时间戳；`daily` 用当天北京日期；其他文字则固定不变 |
 | `maze.title` | `AIRPAGE_MAZE_TITLE` | `MAZE · 迷宫` | 左上角标题 |
 | `maze.solve` | `AIRPAGE_MAZE_SOLVE` | `false` | `true` 时画出灰色解答路径 |
 | `maze.large` | `AIRPAGE_MAZE_LARGE` | `false` | `true` 时使用更大网格 |
@@ -29,7 +29,7 @@
 
 ## 什么时候运行
 
-- 每天北京时间 08:00 自动运行一次。时间写在 `.github/workflows/airpage-push.yml` 的 cron：`0 0 * * *`（UTC）。
+- 每 5 分钟自动运行一次。时间写在 `.github/workflows/airpage-push.yml` 的 cron：`*/5 * * * *`。GitHub 的定时触发可能比设定时间晚几分钟。
 - 也可以在 Actions 页面手动运行「AirPage 定时推送」。
 
 定时任务要等工作流出现在默认分支 `main` 之后才会生效。

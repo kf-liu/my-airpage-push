@@ -205,8 +205,11 @@ def fill_rect(draw: ImageDraw.ImageDraw, x: int, y: int, width: int, height: int
 
 def resolve_seed(seed: str) -> str:
     chosen = seed.strip() or "AIRPAGE"
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
     if chosen.lower() == "daily":
-        return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d")
+    if chosen.lower() == "timestamp":
+        return str(int(now.timestamp()))
     return chosen
 
 
@@ -384,7 +387,7 @@ def render_template(template: str, width: int, height: int, config: dict) -> Ima
     if not isinstance(maze, dict):
         fail("config.json 里的 maze 必须是对象。")
     options = {
-        "seed": resolve_seed(pick_text("AIRPAGE_MAZE_SEED", maze.get("seed"), "daily")),
+        "seed": resolve_seed(pick_text("AIRPAGE_MAZE_SEED", maze.get("seed"), "timestamp")),
         "title": pick_text("AIRPAGE_MAZE_TITLE", maze.get("title"), "MAZE · 迷宫"),
         "solve": pick_bool("AIRPAGE_MAZE_SOLVE", maze.get("solve"), False),
         "large": pick_bool("AIRPAGE_MAZE_LARGE", maze.get("large"), False),
